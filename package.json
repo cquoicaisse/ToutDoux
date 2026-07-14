@@ -1,0 +1,17 @@
+{
+  "name": "toutdoux",
+  "version": "1.0.0",
+  "description": "Assistant anti-procrastination — tout doux. Tâches contextuelles déclenchées par tags NFC.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "cd client && npm run build",
+    "setup": "npm install && cd client && npm install && npm run build",
+    "dev:server": "node server/index.js",
+    "dev:client": "cd client && npm run dev"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.0",
+    "express": "^4.21.0"
+  }
+}
