@@ -7,8 +7,30 @@ import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import { buildGreetingPrompt, fallbackFor, SETTINGS } from "./personality.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ─── Chargement simple d'un fichier .env (sans dépendance externe) ───
+// Format : une ligne "CLE=valeur" par variable. Lignes vides et # ignorées.
+// Le .env est OPTIONNEL : sans lui, les valeurs par défaut s'appliquent.
+(() => {
+  try {
+    const envPath = path.join(__dirname, "..", ".env");
+    if (fs.existsSync(envPath)) {
+      for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+        const s = line.trim();
+        if (!s || s.startsWith("#")) continue;
+        const i = s.indexOf("=");
+        if (i === -1) continue;
+        const key = s.slice(0, i).trim();
+        const val = s.slice(i + 1).trim();
+        if (!(key in process.env)) process.env[key] = val;
+      }
+    }
+  } catch (e) { /* pas de .env, on garde les défauts */ }
+})();
+
 const PORT = process.env.PORT || 3000;
 
 // ─── Base de données : un simple fichier, sauvegardable en une copie ───
@@ -129,31 +151,12 @@ app.get("/api/greeting", async (req, res) => {
     .map(toClient)
     .filter((t) => !t.done);
 
-  // Repli neutre si Ollama n'est pas lancé : l'appli ne casse jamais pour autant.
-  const fallback =
-    ctx === "sortie"
-      ? "Avant de filer, un dernier coup d'œil."
-      : "De retour. Voilà ce qui t'attend, à ton rythme.";
-
+  // Aucune tâche : repli propre au contexte, pas besoin de déranger le modèle.
   if (rows.length === 0) {
-    return res.json({ text: ctx === "sortie" ? "Rien à vérifier, bonne journée." : "Rien de prévu. Souffle un peu." });
+    return res.json({ text: fallbackFor(ctx, true) });
   }
 
-  const liste = rows
-    .map((t) => `- ${t.name}${t.duration ? ` (${t.duration} min)` : ""}`)
-    .join("\n");
-
-  const lieu =
-    ctx === "sortie"
-      ? "L'utilisateur s'apprête à sortir de chez lui."
-      : "L'utilisateur vient de rentrer chez lui.";
-
-  const prompt = `${lieu} Voici ses tâches du moment :
-${liste}
-
-Écris UNE phrase d'accueil en français (25 mots max), chaleureuse et détendue.
-Tu peux suggérer par quoi commencer, en privilégiant une tâche courte pour lancer la dynamique.
-Ne liste pas tout. N'donne pas d'ordre, ne culpabilise pas. C'est une aide, pas un patron.`;
+  const prompt = buildGreetingPrompt(ctx, rows);
 
   try {
     const r = await fetch(`${OLLAMA_URL}/api/generate`, {
@@ -163,16 +166,20 @@ Ne liste pas tout. N'donne pas d'ordre, ne culpabilise pas. C'est une aide, pas 
         model: OLLAMA_MODEL,
         prompt,
         stream: false,
-        options: { temperature: 0.7, num_predict: 80 },
+        options: {
+          temperature: SETTINGS.temperature,
+          num_predict: SETTINGS.maxTokensGreeting,
+        },
       }),
       signal: AbortSignal.timeout(8000),
     });
     if (!r.ok) throw new Error(`Ollama ${r.status}`);
     const data = await r.json();
-    res.json({ text: (data.response || fallback).trim() });
+    const text = (data.response || "").trim();
+    res.json({ text: text || fallbackFor(ctx) });
   } catch (e) {
     // Ollama absent / modèle non installé : on renvoie le repli, jamais d'erreur bloquante.
-    res.json({ text: fallback, offline: true });
+    res.json({ text: fallbackFor(ctx), offline: true });
   }
 });
 
